@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENNEX · Tablero comercial</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   CONFIGURACIÓN
+   ════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  // Enlace publicado del Maestro Ennex 2026 (Archivo → Publicar en la web)
+  URL_MAESTRO: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ11xqahko9aSBL2iyPp_d-ICgfgZEpxCG6qf_fOOWTzV8v_XilNVmhpv5YX-VYtfRbNogIrXbWJ87q/pub?output=csv",
+
+  // Ruta alterna, la única que funciona al abrir el archivo con doble clic.
+  // Requiere que el Sheet esté compartido como "cualquiera con el enlace · lector".
+  SHEET_ID: "1CN44V0WLwqroOf_iqI_-Pa1iT_2GQBwH3McTRzWN1cQ",
+  HOJA_GID: "478579686",
+
+  // Programa de procesos de planta (pestaña publicada aparte)
+  URL_PROCESOS: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRhFxoBFS4OJV5Ei5mSXgqrtCrYhQ2iiAopnsAwJz6DJKpXhfPeyMLrFlQekcWiFTwhPMdqmRSzAVXg/pub?gid=1328530707&single=true&output=csv",
+
+  PERIODO:   "YTD",
+  META_MES:  800,         // meta mensual de TMH entregadas
+  DIAS_ALERTA: 45,        // días sin reporte ni liquidación para marcar demora
+  REFRESCO_MIN: 10,
+  PROCESOS_VISIBLES: 7,   // cuántos procesos se ven en el cronograma
+
+  // Gráfico de mercado en el pie.
+  // "kitco"       widget oficial de metales base de Kitco (cobre por defecto).
+  // "tradingview" cinta gratuita de TradingView (COMEX, diferida).
+  // "embebido"    cualquier otro fragmento que pegues en CODIGO_EMBEBIDO.
+  // ""            oculta el bloque.
+  MERCADO: "kitco",
+  CODIGO_EMBEBIDO: ``,
+  SIMBOLOS: [
+    {proName:"COMEX:HG1!",     title:"Cobre"},
+    {proName:"COMEX:SI1!",     title:"Plata"},
+    {proName:"COMEX:GC1!",     title:"Oro"},
+    {proName:"FX_IDC:USDPEN",  title:"USD/PEN"}
+  ]
+};
+</script>
+
+<style>
+:root{
+  --fondo:#0E1721;
+  --superficie:#16232F;
+  --superficie-alta:#1C2E3D;
+  --linea:#24384A;
+  --texto:#EAF1F6;
+  --zinc:#8DA5B8;
+  --cobre:#CE7B3C;
+  --cobre-claro:#E9A164;
+  --malaquita:#3FA37A;
+  --ambar:#E0A32E;
+  --plata:#A9BCC9;
+  --plomo:#6E8FA6;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{font-size:clamp(10px,1.15vh,28px)}
+
+body{
+  background:var(--fondo);
+  color:var(--texto);
+  font-family:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  height:100vh;overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+.num{
+  font-family:"Barlow Semi Condensed","Arial Narrow",sans-serif;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── Estructura ─────────────────────────────────────────── */
+.tablero{height:100vh;display:grid;grid-template-rows:7.5vh 1fr;gap:1.1vh;padding:1.5vh 1.6vw}
+
+/* ── Panel de mercado ───────────────────────────────────── */
+/* El widget de Kitco viene en tema claro, así que se enmarca como
+   tarjeta blanca deliberada en vez de dejarlo flotando sobre el fondo. */
+.caja-mercado{
+  flex:1;min-height:0;overflow:hidden;
+  background:#FFFFFF;border-radius:.4rem;
+  display:flex;align-items:stretch;justify-content:center;
+}
+.caja-mercado .aviso{font-size:1.3rem;color:#5A6B7A;text-align:center;padding:0 1vw;margin:auto}
+
+.cuerpo{
+  display:grid;
+  grid-template-columns:22% 1fr 1fr 440px;
+  grid-template-rows:53% 1fr;
+  gap:1.3vh 1.2vw;
+  min-height:0;
+}
+.p-consolidado{grid-column:1;grid-row:1/3}
+.p-traders    {grid-column:2;grid-row:1}
+.p-meses      {grid-column:3;grid-row:1}
+.p-cronograma {grid-column:2/4;grid-row:2}
+.p-mercado    {grid-column:4;grid-row:1/3}
+
+.panel{
+  background:var(--superficie);
+  border:1px solid var(--linea);
+  border-radius:.5rem;
+  padding:1.9vh 1.2vw;
+  min-height:0;display:flex;flex-direction:column;
+}
+
+.titulo{
+  font-size:1.5rem;font-weight:600;color:var(--zinc);
+  margin-bottom:1.4vh;display:flex;justify-content:space-between;align-items:baseline;gap:1vw;
+}
+.titulo .aparte{font-size:1.25rem;opacity:.75;font-weight:400;white-space:nowrap}
+
+/* ── Cabecera ───────────────────────────────────────────── */
+.cabecera{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--linea);padding-bottom:.9vh}
+.marca{display:flex;align-items:baseline;gap:1.1vw}
+.logo{font-family:"Barlow Semi Condensed",sans-serif;font-size:3.4rem;font-weight:700;letter-spacing:.14em;line-height:1}
+.logo b{color:var(--cobre)}
+.marca span{color:var(--zinc);font-size:1.55rem}
+
+.estado{display:flex;align-items:center;gap:1.3vw}
+.reloj{font-size:2.7rem;font-weight:600;line-height:1}
+.fecha-hoy{color:var(--zinc);font-size:1.35rem;line-height:1.1}
+.sync{display:flex;align-items:center;gap:.5vw;color:var(--zinc);font-size:1.3rem;border-left:1px solid var(--linea);padding-left:1.3vw;max-width:20vw}
+.punto{width:.8rem;height:.8rem;border-radius:50%;background:var(--malaquita);flex:none}
+.punto.error{background:var(--ambar)}
+.punto.demo{background:var(--zinc)}
+
+/* ── Consolidado ────────────────────────────────────────── */
+.cifra{font-size:10rem;font-weight:700;line-height:.82;letter-spacing:-.02em}
+.cifra small{font-size:2.4rem;font-weight:500;color:var(--zinc);margin-left:.4vw;letter-spacing:0}
+.pie-cifra{color:var(--zinc);font-size:1.45rem;margin-top:.8vh}
+
+.medidor{margin-top:1.8vh;height:2.2vh;min-height:13px;background:var(--fondo);border:1px solid var(--linea);border-radius:.2rem;overflow:hidden}
+.medidor i{display:block;height:100%;width:0;
+  background:repeating-linear-gradient(115deg,rgba(14,23,33,.34) 0 3px,transparent 3px 8px),var(--cobre);
+  transition:width 1.1s cubic-bezier(.2,.7,.3,1)}
+.medidor-pie{display:flex;justify-content:space-between;margin-top:.7vh;font-size:1.3rem;color:var(--zinc)}
+.medidor-pie b{color:var(--texto);font-weight:600}
+
+.mini{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--linea);margin-top:1.8vh;padding-top:1.5vh;gap:.8vw}
+.mini div+div{border-left:1px solid var(--linea);padding-left:.8vw}
+.mini .v{font-size:3rem;font-weight:600;line-height:1}
+.mini .k{font-size:1.2rem;color:var(--zinc);margin-top:.3vh;line-height:1.2}
+
+/* Mezcla por producto */
+.mezcla{border-top:1px solid var(--linea);margin-top:1.8vh;padding-top:1.5vh;flex:1;display:flex;flex-direction:column;min-height:0}
+.mezcla .rot{font-size:1.25rem;color:var(--zinc);margin-bottom:1vh}
+.mezcla .filas{flex:1;display:flex;flex-direction:column;justify-content:space-around;min-height:0}
+.fila-prod{display:grid;grid-template-columns:3.4rem 1fr 5.2rem;align-items:center;gap:.5vw}
+.fila-prod .sim{font-size:1.75rem;font-weight:600;line-height:1}
+.fila-prod .pista{height:1.7vh;min-height:11px;background:var(--superficie-alta);border-radius:.15rem;overflow:hidden}
+.fila-prod .pista i{display:block;height:100%;width:0;transition:width .9s cubic-bezier(.2,.7,.3,1)}
+.fila-prod .v{text-align:right;font-size:1.7rem;font-weight:600}
+
+/* ── Traders ────────────────────────────────────────────── */
+.lista-traders{flex:1;display:flex;flex-direction:column;justify-content:space-around;min-height:0}
+.fila-trader .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.7vh}
+.fila-trader .nombre{font-size:2.3rem;font-weight:600;line-height:1}
+.fila-trader .cifras{text-align:right;line-height:1}
+.fila-trader .cifras b{font-size:2.5rem;font-weight:600}
+.fila-trader .cifras span{font-size:1.3rem;color:var(--zinc);margin-left:.5vw}
+.fila-trader .pista{height:2.6vh;min-height:16px;background:var(--superficie-alta);border-radius:.15rem;overflow:hidden}
+.fila-trader .pista i{display:block;height:100%;width:0;background:var(--cobre);transition:width .9s cubic-bezier(.2,.7,.3,1)}
+.fila-trader:first-child .pista i{background:var(--cobre-claro)}
+.fila-trader .sub{font-size:1.2rem;color:var(--zinc);margin-top:.5vh}
+
+/* ── Meses ──────────────────────────────────────────────── */
+.barras-mes{flex:1;display:grid;grid-template-rows:1fr auto;gap:0 .55vw;min-height:0}
+.mes-bar{grid-row:1;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
+.mes-bar .v{text-align:center;font-size:1.5rem;font-weight:600;line-height:1;margin-bottom:.5vh}
+.mes-bar .col{width:100%;height:0;display:flex;flex-direction:column;justify-content:flex-end;
+  border-radius:.15rem .15rem 0 0;overflow:hidden;transition:height 1s cubic-bezier(.2,.7,.3,1)}
+.seg{width:100%}
+.seg.acopio{background:var(--plomo);flex:none}
+.seg.progreso{background:var(--cobre);flex:1}
+.mes-bar.actual .seg.progreso{background:var(--cobre-claro)}
+
+.capa-meta{grid-row:1;grid-column:1/-1;position:relative;pointer-events:none}
+.linea-meta{position:absolute;left:0;right:0;border-top:1px dashed var(--zinc);opacity:.85}
+.linea-meta span{position:absolute;right:0;top:-1.6rem;font-size:1.1rem;color:var(--zinc);
+  background:var(--superficie);padding:0 .3vw}
+
+.mes-lab{grid-row:2;text-align:center;padding-top:.6vh;border-top:1px solid var(--linea);margin-top:.5vh}
+.mes-lab .k{font-size:1.25rem;color:var(--zinc);line-height:1.1}
+.mes-lab .dd{display:flex;justify-content:center;gap:.45vw;margin-top:.25vh;font-size:1.2rem;font-weight:600}
+.mes-lab .pp{color:var(--cobre-claro)}
+.mes-lab .aa{color:var(--plomo)}
+
+/* ── Cronograma ─────────────────────────────────────────── */
+.gantt{flex:1;display:flex;flex-direction:column;min-height:0}
+.escala{display:flex;justify-content:space-between;font-size:1.2rem;color:var(--zinc);border-bottom:1px solid var(--linea);padding-bottom:.5vh;margin-bottom:.6vh;margin-left:15vw}
+.filas{flex:1;display:flex;flex-direction:column;justify-content:space-around;min-height:0;position:relative}
+
+.fila-proc{display:grid;grid-template-columns:15vw 1fr;align-items:center;gap:.5vw}
+.proc-id{overflow:hidden;line-height:1.15}
+.proc-id .p{font-size:1.6rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proc-id .s{font-size:1.15rem;color:var(--zinc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.carril{position:relative;height:2.8vh;min-height:18px;background:linear-gradient(var(--superficie-alta),var(--superficie-alta)) center/100% 1px no-repeat}
+.barra{position:absolute;top:0;bottom:0;border-radius:.15rem;display:flex;align-items:center;padding:0 .45vw;
+  font-size:1.25rem;font-weight:600;color:var(--fondo);white-space:nowrap;overflow:hidden;background:var(--cobre)}
+.barra.cerrado{background:var(--malaquita)}
+.barra.programado{background:transparent;border:1px dashed var(--zinc);color:var(--zinc)}
+.barra.demorado{background:var(--ambar)}
+.hito{position:absolute;top:50%;width:.85rem;height:.85rem;margin:-.42rem 0 0 -.42rem;border-radius:50%;
+  background:var(--fondo);border:2px solid var(--cobre-claro)}
+.hito.lf{border-color:var(--malaquita);background:var(--malaquita)}
+
+.hoy{position:absolute;top:0;bottom:0;width:2px;background:var(--cobre-claro);opacity:.75}
+.hoy::after{content:"hoy";position:absolute;top:-1.6vh;left:50%;transform:translateX(-50%);font-size:1.1rem;color:var(--cobre-claro)}
+
+.leyenda{display:flex;gap:1.2vw;font-size:1.2rem;color:var(--zinc);align-items:center}
+.leyenda i{display:inline-block;width:1.1rem;height:.6rem;border-radius:.1rem;margin-right:.3vw;vertical-align:middle}
+
+.vacio{color:var(--zinc);font-size:1.55rem;margin:auto;text-align:center;line-height:1.5}
+.vacio b{color:var(--texto);display:block;font-weight:600;margin-bottom:.5vh}
+
+@media (prefers-reduced-motion:reduce){
+  .medidor i,.pista i,.mes .col{transition:none}
+}
+</style>
+</head>
+
+<body>
+<div class="tablero">
+
+  <header class="cabecera">
+    <div class="marca">
+      <div class="logo">ENN<b>E</b>X</div>
+      <span>Comercialización de concentrado</span>
+    </div>
+    <div class="estado">
+      <div>
+        <div class="reloj num" id="reloj">--:--</div>
+        <div class="fecha-hoy" id="fecha">&nbsp;</div>
+      </div>
+      <div class="sync"><span class="punto" id="punto"></span><span id="sync-txt">Conectando…</span></div>
+    </div>
+  </header>
+
+  <div class="cuerpo">
+
+    <section class="panel p-consolidado">
+      <div class="titulo">TMH entregadas <span class="aparte" id="periodo"></span></div>
+      <div class="cifra num" id="tmh-total">0<small>TMH</small></div>
+      <div class="pie-cifra" id="tmh-pie">&nbsp;</div>
+
+      <div class="medidor"><i id="medidor-fill"></i></div>
+      <div class="medidor-pie">
+        <span id="medidor-mes">—</span>
+        <span>meta mensual <b class="num" id="medidor-meta">0</b> TMH</span>
+      </div>
+
+      <div class="mini">
+        <div><div class="v num" id="k-lotes">0</div><div class="k">Lotes</div></div>
+        <div><div class="v num" id="k-cump">0%</div><div class="k">Cumpl. acumulado</div></div>
+        <div><div class="v num" id="k-ley">0%</div><div class="k">Ley Cu prom.</div></div>
+      </div>
+
+      <div class="mezcla">
+        <div class="rot">Mezcla por producto</div>
+        <div class="filas" id="mezcla"></div>
+      </div>
+    </section>
+
+    <section class="panel p-traders">
+      <div class="titulo">TMH por procedencia <span class="aparte" id="proc-nota"></span></div>
+      <div class="lista-traders" id="lista-procedencia"></div>
+    </section>
+
+    <section class="panel p-meses">
+      <div class="titulo">
+        <span>Entregas por mes</span>
+        <span class="leyenda">
+          <span><i style="background:var(--cobre)"></i>Progreso</span>
+          <span><i style="background:var(--plomo)"></i>Acopio</span>
+        </span>
+      </div>
+      <div class="barras-mes" id="barras-mes"></div>
+    </section>
+
+    <section class="panel p-mercado">
+      <div class="titulo">Cobre · mercado <span class="aparte">Kitco · 24 h</span></div>
+      <div class="caja-mercado" id="mercado"></div>
+    </section>
+
+    <section class="panel p-cronograma">
+      <div class="titulo">
+        <span>Cronograma de planta <span class="aparte" id="gantt-nota"></span></span>
+        <span class="leyenda">
+          <span><i style="background:var(--cobre-claro)"></i>en proceso</span>
+          <span><i style="background:var(--malaquita)"></i>terminado</span>
+          <span><i style="border:1px dashed var(--zinc);background:none"></i>programado</span>
+        </span>
+      </div>
+      <div class="gantt">
+        <div class="escala" id="escala"></div>
+        <div class="filas" id="filas"></div>
+      </div>
+    </section>
+
+  </div>
+
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   1. Lectura del Sheet publicado
+   ════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════
+   1. Lectura del Sheet: tres vías, en orden
+      A. CSV publicado  → sirve cuando la página está alojada en http/https
+      B. JSONP a gviz   → sirve incluso abriendo el archivo con doble clic
+      C. Respaldo local → última foto conocida, para que la pantalla no quede vacía
+   ════════════════════════════════════════════════════════════════ */
+let origenDatos = "";
+
+async function viaCSV(){
+  const url = CONFIG.URL_MAESTRO + (CONFIG.URL_MAESTRO.includes("?") ? "&" : "?") + "t=" + Date.now();
+  const r = await fetch(url);
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  const txt = await r.text();
+  if(/^\s*</.test(txt)) throw new Error("respuesta no es CSV");
+  return parseCSV(txt);
+}
+
+/* Un <script> no está sujeto a las reglas de origen cruzado, así que esta vía
+   funciona desde file://. A cambio exige permiso de lectura sobre el archivo. */
+function viaJSONP(){
+  return new Promise((resolve,reject)=>{
+    if(!CONFIG.SHEET_ID) return reject(new Error("sin SHEET_ID"));
+    const cb = "ennex_" + Date.now();
+    const s = document.createElement("script");
+    const limpiar = ()=>{ delete window[cb]; s.remove(); clearTimeout(reloj); };
+    const reloj = setTimeout(()=>{ limpiar(); reject(new Error("tiempo agotado")); }, 12000);
+
+    window[cb] = resp=>{
+      limpiar();
+      try{
+        const t = resp.table;
+        const cab = t.cols.map(c=>(c.label||c.id||"").toLowerCase().trim()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,""));
+        resolve(t.rows.map(fila=>{
+          const o={};
+          cab.forEach((k,i)=>{
+            if(!k || o[k]!==undefined) return;
+            const c = fila.c && fila.c[i];
+            o[k] = c ? String(c.f ?? c.v ?? "").trim() : "";
+          });
+          return o;
+        }));
+      }catch(e){ reject(e); }
+    };
+
+    s.onerror = ()=>{ limpiar(); reject(new Error("sin acceso de lectura")); };
+    s.src = "https://docs.google.com/spreadsheets/d/" + CONFIG.SHEET_ID +
+            "/gviz/tq?tqx=out:json;responseHandler=" + cb +
+            "&gid=" + CONFIG.HOJA_GID + "&t=" + Date.now();
+    document.head.appendChild(s);
+  });
+}
+
+async function traerMaestro(){
+  try{ const f = await viaCSV();   if(f.length){ origenDatos="csv";   return f; } }catch(e){ console.warn("CSV:",e.message); }
+  try{ const f = await viaJSONP(); if(f.length){ origenDatos="jsonp"; return f; } }catch(e){ console.warn("JSONP:",e.message); }
+  origenDatos="fallo";
+  throw new Error("no se pudo leer el Sheet por ninguna vía");
+}
+
+const clave = s => String(s).toLowerCase().trim().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]/g,"");
+
+/* Devuelve la hoja como filas crudas (array de arrays) */
+function parseCSVFilas(txt){
+  const filas=[]; let campo="", fila=[], comillas=false;
+  txt = txt.replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+  for(let i=0;i<txt.length;i++){
+    const c=txt[i];
+    if(comillas){
+      if(c==='"'){ if(txt[i+1]==='"'){campo+='"';i++;} else comillas=false; }
+      else campo+=c;
+    }else{
+      if(c==='"') comillas=true;
+      else if(c===","){ fila.push(campo); campo=""; }
+      else if(c==="\n"){ fila.push(campo); filas.push(fila); fila=[]; campo=""; }
+      else campo+=c;
+    }
+  }
+  if(campo||fila.length){ fila.push(campo); filas.push(fila); }
+  return filas;
+}
+
+/* Devuelve la hoja como objetos, tomando la primera fila como encabezado */
+function parseCSV(txt){
+  const filas=parseCSVFilas(txt);
+  if(!filas.length) return [];
+  const cab = filas[0].map(clave);
+  return filas.slice(1).map(f=>{
+    const o={}; cab.forEach((k,i)=>{ if(k && o[k]===undefined) o[k]=(f[i]??"").trim(); });
+    return o;
+  });
+}
+
+const MES={ene:0,feb:1,mar:2,abr:3,may:4,jun:5,jul:6,ago:7,sep:8,set:8,oct:9,nov:10,dic:11};
+const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Set","Oct","Nov","Dic"];
+
+function num(v){
+  if(typeof v==="number") return v;
+  let s=String(v).replace(/[^\d.,\-]/g,"").trim();
+  if(!s||s==="-") return 0;
+  const up=s.lastIndexOf("."), uc=s.lastIndexOf(",");
+  if(up>-1&&uc>-1) s = uc>up ? s.replace(/\./g,"").replace(",",".") : s.replace(/,/g,"");
+  else if(uc>-1)   s = /,\d{1,2}$/.test(s) ? s.replace(",",".") : s.replace(/,/g,"");
+  const n=parseFloat(s); return isNaN(n)?0:n;
+}
+
+/* "2-ene" toma el año del código de lote; "6/1/2026" trae el año propio */
+function fecha(v, anio, mesLote){
+  const s=String(v||"").trim();
+  if(!s || /^x+$/i.test(s)) return null;
+  let m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){ let a=+m[3]; if(a<100) a+=2000; return new Date(a,+m[2]-1,+m[1]); }
+  m=s.match(/^(\d{1,2})-([a-zA-Záéíóú]{3,4})\.?$/);
+  if(m){
+    const mi=MES[m[2].toLowerCase().slice(0,3).normalize("NFD").replace(/[\u0300-\u036f]/g,"")];
+    if(mi===undefined) return null;
+    let a = anio || new Date().getFullYear();
+    if(mesLote!==undefined && mi < mesLote-6) a++;   // cruce de año
+    return new Date(a,mi,+m[1]);
+  }
+  const d=new Date(s); return isNaN(d)?null:d;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   2. Modelo: una fila maestra por lote (código de 8 dígitos)
+   ════════════════════════════════════════════════════════════════ */
+function armarLotes(filas){
+  const hoy=new Date(); hoy.setHours(0,0,0,0);
+  return filas.map(r=>{
+    const cod=(r.lote||"").trim();
+    const m=cod.match(/^(\d{4})(\d{2})(\d{2})/);
+    if(!m) return null;
+    const anio=+m[1], mesLote=+m[2]-1;
+
+    const entrega = fecha(r.fechaentrega, anio, mesLote);
+    const reporte = fecha(r.fechadereporte, anio, mesLote);
+    const lp      = fecha(r.fechadelp, anio, mesLote);
+    const lf      = fecha(r.fechadelf, anio, mesLote);
+
+    const tmh = num(r.tmhllegada) || num(r.tmhsalida) || num(r.tmhcompra);
+    const tms = num(r.tmsllegada) || num(r.tmscompra);
+    const ley = num(r.cufinal) || num(r.cucompra);
+
+    let estado;
+    if(entrega && entrega>hoy)      estado="programado";
+    else if(lf)                     estado="cerrado";
+    else if(entrega && !reporte && (hoy-entrega)/864e5 > (CONFIG.DIAS_ALERTA||45)) estado="demorado";
+    else                            estado="proceso";
+
+    return {
+      cod, anio, tmh, tms, ley,
+      trader:  (r.trader||"").trim() || "Sin trader",
+      producto:(r.producto||"").trim() || "—",
+      origen:  (r.origen||"").trim(),
+      factura: (r.factura||"").trim(),
+      entrega, reporte, lp, lf, estado
+    };
+  }).filter(l=>l && l.tmh>0);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   3. Formato
+   ════════════════════════════════════════════════════════════════ */
+const fmt = (n,d=0)=> n.toLocaleString("es-PE",{minimumFractionDigits:d,maximumFractionDigits:d});
+const dia = d => d.getDate()+" "+MESES[d.getMonth()].toLowerCase();
+const esc = s => String(s).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+
+/* ════════════════════════════════════════════════════════════════
+   4. Pintado
+   ════════════════════════════════════════════════════════════════ */
+const COLOR_PROD={Cu:"var(--cobre)",Ag:"var(--plata)",Pb:"var(--plomo)",Zn:"var(--malaquita)"};
+
+function pintarConsolidado(entregadas, programados){
+  const total = entregadas.reduce((s,l)=>s+l.tmh,0);
+  const hoy=new Date();
+
+  document.getElementById("tmh-total").innerHTML = fmt(total,1)+"<small>TMH</small>";
+  document.getElementById("periodo").textContent = CONFIG.PERIODO;
+
+  // Medidor: mes en curso contra la meta mensual
+  const delMes = entregadas.filter(l=>l.entrega && l.entrega.getMonth()===hoy.getMonth() && l.entrega.getFullYear()===hoy.getFullYear());
+  const tmhMes = delMes.reduce((s,l)=>s+l.tmh,0);
+  const meta   = CONFIG.META_MES||0;
+  const pct    = meta ? Math.min(tmhMes/meta*100,100) : 0;
+
+  document.getElementById("medidor-mes").textContent =
+    MESES[hoy.getMonth()].toLowerCase()+": "+fmt(tmhMes,0)+" TMH ("+fmt(pct,0)+"%)";
+  document.getElementById("medidor-meta").textContent = fmt(meta);
+  requestAnimationFrame(()=>{ document.getElementById("medidor-fill").style.width = pct+"%"; });
+
+  // Cumplimiento contra la meta acumulada de los meses ya cerrados
+  const meses = new Set(entregadas.filter(l=>l.entrega).map(l=>l.entrega.getMonth()));
+  meses.delete(hoy.getMonth());
+  const metaAcum = meses.size*meta;
+  const totalCerrado = entregadas.filter(l=>l.entrega && !(l.entrega.getMonth()===hoy.getMonth() && l.entrega.getFullYear()===hoy.getFullYear()))
+                                 .reduce((s,l)=>s+l.tmh,0);
+  const cump = metaAcum ? totalCerrado/metaAcum*100 : 0;
+
+  const cu = entregadas.filter(l=>l.producto==="Cu" && l.ley>0 && l.tms>0);
+  const ley = cu.length ? cu.reduce((s,l)=>s+l.ley*l.tms,0)/cu.reduce((s,l)=>s+l.tms,0) : 0;
+
+  document.getElementById("k-lotes").textContent = entregadas.length;
+  document.getElementById("k-cump").textContent  = metaAcum ? fmt(cump,0)+"%" : "—";
+  document.getElementById("k-ley").textContent   = ley ? fmt(ley,1)+"%" : "—";
+
+  const tp = programados.reduce((s,l)=>s+l.tmh,0);
+  document.getElementById("tmh-pie").textContent = tp
+    ? programados.length+" lote"+(programados.length>1?"s":"")+" programado por "+fmt(tp,0)+" TMH"
+    : "Sin lotes programados pendientes";
+
+  // Mezcla por producto
+  const mapa=new Map();
+  entregadas.forEach(l=>mapa.set(l.producto,(mapa.get(l.producto)||0)+l.tmh));
+  const lista=[...mapa.entries()].sort((a,b)=>b[1]-a[1]);
+  const tope=lista.length?lista[0][1]:1;
+  document.getElementById("mezcla").innerHTML = lista.map(([p,v])=>`
+    <div class="fila-prod">
+      <div class="sim">${esc(p)}</div>
+      <div class="pista"><i data-w="${(v/tope*100).toFixed(1)}" style="background:${COLOR_PROD[p]||"var(--zinc)"}"></i></div>
+      <div class="v num">${fmt(v,0)}</div>
+    </div>`).join("");
+}
+
+/* En el maestro la columna Origen distingue mineral de Progreso (planta
+   propia) del comprado en Acopio. */
+const COLOR_ORIGEN={Progreso:"var(--cobre)",Acopio:"var(--plomo)"};
+
+function normOrigen(v){
+  const s=String(v||"").trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  if(s.startsWith("prog")) return "Progreso";
+  if(s.startsWith("acop")) return "Acopio";
+  return s ? s[0].toUpperCase()+s.slice(1) : "Sin origen";
+}
+
+function pintarProcedencia(entregadas){
+  const cont=document.getElementById("lista-procedencia");
+  const mapa=new Map();
+  entregadas.forEach(l=>{
+    const k=normOrigen(l.origen);
+    const t=mapa.get(k)||{tmh:0,lotes:0,prod:new Set()};
+    t.tmh+=l.tmh; t.lotes++; t.prod.add(l.producto); mapa.set(k,t);
+  });
+  const total=entregadas.reduce((s,l)=>s+l.tmh,0)||1;
+  const orden=["Progreso","Acopio"];
+  const lista=[...mapa.entries()].sort((a,b)=>{
+    const ia=orden.indexOf(a[0]), ib=orden.indexOf(b[0]);
+    if(ia>-1||ib>-1) return (ia<0?9:ia)-(ib<0?9:ib);
+    return b[1].tmh-a[1].tmh;
+  });
+  document.getElementById("proc-nota").textContent = lista.length+" procedencias";
+
+  if(!lista.length){
+    cont.innerHTML='<div class="vacio"><b>Sin entregas registradas</b>Revisa la columna Origen del maestro</div>';
+    return;
+  }
+  const tope=Math.max(...lista.map(l=>l[1].tmh))||1;
+  cont.innerHTML = lista.map(([n,t])=>`
+    <div class="fila-trader">
+      <div class="top">
+        <div class="nombre">${esc(n)}</div>
+        <div class="cifras"><b class="num">${fmt(t.tmh,0)}</b><span>${fmt(t.tmh/total*100,1)}%</span></div>
+      </div>
+      <div class="pista"><i data-w="${(t.tmh/tope*100).toFixed(1)}" style="background:${COLOR_ORIGEN[n]||"var(--zinc)"}"></i></div>
+      <div class="sub">${t.lotes} lotes · ${[...t.prod].join(", ")}</div>
+    </div>`).join("");
+}
+
+function pintarMeses(entregadas){
+  const cont=document.getElementById("barras-mes");
+  const hoy=new Date();
+  const mapa=new Map();
+  entregadas.forEach(l=>{
+    if(!l.entrega) return;
+    const k=l.entrega.getMonth();
+    const m=mapa.get(k)||{P:0,A:0,T:0};
+    const o=normOrigen(l.origen);
+    if(o==="Acopio") m.A+=l.tmh; else m.P+=l.tmh;
+    m.T+=l.tmh; mapa.set(k,m);
+  });
+  if(!mapa.size){ cont.innerHTML='<div class="vacio">Sin fechas de entrega legibles</div>'; return; }
+
+  const meses=[...mapa.keys()].sort((a,b)=>a-b);
+  const serie=[]; for(let m=meses[0];m<=meses[meses.length-1];m++) serie.push([m,mapa.get(m)||{P:0,A:0,T:0}]);
+  const meta=CONFIG.META_MES||0;
+  const tope=Math.max(...serie.map(s=>s[1].T), meta)*1.15||1;
+
+  cont.style.gridTemplateColumns="repeat("+serie.length+",1fr)";
+  cont.innerHTML =
+    serie.map(([m,d],i)=>{
+      const alto=(d.T/tope*100).toFixed(1);
+      const pAcopio=d.T ? (d.A/d.T*100).toFixed(1) : 0;
+      return `<div class="mes-bar ${m===hoy.getMonth()?"actual":""}" style="grid-column:${i+1}">
+        <div class="v num">${fmt(d.T,0)}</div>
+        <div class="col" data-h="${alto}">
+          <div class="seg acopio" style="height:${pAcopio}%"></div>
+          <div class="seg progreso"></div>
+        </div>
+      </div>`;
+    }).join("")
+    + (meta ? `<div class="capa-meta"><div class="linea-meta" style="bottom:${(meta/tope*100).toFixed(1)}%"><span>meta ${fmt(meta)}</span></div></div>` : "")
+    + serie.map(([m,d],i)=>`
+      <div class="mes-lab" style="grid-column:${i+1}">
+        <div class="k">${MESES[m]}</div>
+        <div class="dd"><span class="pp num">${fmt(d.P,0)}</span><span class="aa num">${d.A?fmt(d.A,0):"–"}</span></div>
+      </div>`).join("");
+
+  requestAnimationFrame(()=>{
+    cont.querySelectorAll(".col").forEach(c=>{ c.style.height=c.dataset.h+"%"; });
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Programa de procesos de planta
+   La hoja no empieza en A1: el encabezado real está unas filas más
+   abajo y desplazado a la derecha, así que se localiza por su texto.
+   ════════════════════════════════════════════════════════════════ */
+async function traerProcesos(){
+  const url = CONFIG.URL_PROCESOS + (CONFIG.URL_PROCESOS.includes("?") ? "&" : "?") + "t=" + Date.now();
+  const r = await fetch(url);
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  const txt = await r.text();
+  if(/^\s*</.test(txt)) throw new Error("respuesta no es CSV");
+  return armarProcesos(parseCSVFilas(txt));
+}
+
+function armarProcesos(filas){
+  const iCab = filas.findIndex(f => f.some(c => /proveedordemineral/.test(clave(c))));
+  if(iCab < 0) throw new Error("no se encontró la fila de encabezados");
+
+  const cab = filas[iCab].map(clave);
+  const buscar = (...pats) => {
+    for(const p of pats){ const i = cab.findIndex(k => k.includes(p)); if(i > -1) return i; }
+    return -1;
+  };
+  const iProv = buscar("proveedor"), iTipo = buscar("tipo"),
+        iStock = buscar("stockprogramado","stock"), iLey = buscar("ley"),
+        iIni = buscar("iniciodeproceso","inicio"), iFin = buscar("terminodeproceso","termino");
+  if(iProv < 0 || iIni < 0 || iFin < 0) throw new Error("faltan columnas clave");
+
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+
+  return filas.slice(iCab+1).map(f => {
+    const nombre = (f[iProv] || "").trim();
+    if(!nombre) return null;
+    const ini = fecha(f[iIni]), fin = fecha(f[iFin]);
+    if(!ini || !fin || fin < ini) return null;
+
+    let estado;
+    if(fin < hoy)      estado = "cerrado";
+    else if(ini > hoy) estado = "programado";
+    else               estado = "proceso";
+
+    const leyTxt = (f[iLey] || "").trim();
+    return {
+      nombre,
+      tipo:  (f[iTipo] || "").trim(),
+      stock: num(f[iStock]),
+      ley:   /sin\s*leyes/i.test(leyTxt) ? 0 : num(leyTxt),
+      ini, fin, estado
+    };
+  }).filter(Boolean);
+}
+
+function pintarProcesos(procesos){
+  const filas  = document.getElementById("filas");
+  const escala = document.getElementById("escala");
+  const nota   = document.getElementById("gantt-nota");
+
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const desde = new Date(hoy); desde.setDate(desde.getDate() - 7);
+
+  // Ventana útil: lo que sigue vivo, más lo cerrado la semana pasada
+  const vista = procesos.filter(p => p.fin >= desde)
+                        .sort((a,b) => a.ini - b.ini)
+                        .slice(0, CONFIG.PROCESOS_VISIBLES);
+
+  if(!vista.length){
+    escala.innerHTML = "";
+    filas.innerHTML = '<div class="vacio"><b>Sin procesos programados</b>Revisa el programa de planta</div>';
+    nota.textContent = "";
+    return;
+  }
+
+  let ini = new Date(Math.min(desde, ...vista.map(p => +p.ini)));
+  let fin = new Date(Math.max(hoy,  ...vista.map(p => +p.fin)));
+  const span = Math.max(fin - ini, 864e5) * 1.02;
+  const pos  = d => Math.max(0, Math.min(100, (d - ini) / span * 100));
+
+  escala.innerHTML = Array.from({length:5}, (_,i) =>
+    `<span>${dia(new Date(+ini + span*i/4))}</span>`).join("");
+
+  filas.innerHTML = vista.map(p => {
+    const izq = pos(p.ini), ancho = Math.max(pos(p.fin) - izq, 1.6);
+    const dias = Math.max(1, Math.round((p.fin - p.ini)/864e5));
+    const det  = [p.tipo, p.stock ? fmt(p.stock,0)+" TMH" : "", p.ley ? "ley "+fmt(p.ley,2) : ""]
+                 .filter(Boolean).join(" · ");
+    return `<div class="fila-proc">
+      <div class="proc-id">
+        <div class="p">${esc(p.nombre)}</div>
+        <div class="s">${esc(det)}</div>
+      </div>
+      <div class="carril">
+        <div class="barra ${p.estado}" style="left:${izq}%;width:${ancho}%">${dias} d</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const carril = filas.querySelector(".carril");
+  if(carril && hoy >= ini && hoy <= fin){
+    const marca = document.createElement("div"); marca.className = "hoy";
+    const r = carril.getBoundingClientRect(), c = filas.getBoundingClientRect();
+    marca.style.left = (r.left - c.left + r.width * pos(hoy)/100) + "px";
+    filas.appendChild(marca);
+  }
+
+  const porProcesar = procesos.filter(p => p.fin >= hoy).reduce((s,p) => s + p.stock, 0);
+  nota.textContent = porProcesar ? fmt(porProcesar,0) + " TMH por procesar" : "";
+}
+
+function animarBarras(){
+  document.querySelectorAll(".pista i").forEach(b=>{ b.style.width=b.dataset.w+"%"; });
+}
+
+/* ════════════════════════════════════════════════════════════════
+   5. Ciclo principal
+   ════════════════════════════════════════════════════════════════ */
+function montarKitco(){
+  const cont=document.getElementById("mercado");
+  const host=document.createElement("div");
+  host.id="widget_base_metals_charts";
+  host.style.width="100%";
+  host.style.height="100%";   // sin altura definida el gráfico se dibuja vacío
+  cont.appendChild(host);
+
+  const falla = msg =>{ cont.innerHTML='<div class="aviso">'+msg+'</div>'; };
+
+  const arrancar = ()=>{
+    if(typeof window.createBaseMetalsChartsWidget!=="function")
+      return falla("El widget de Kitco no expuso su función de arranque");
+    try{
+      // Configuración tal como la entrega Kitco.
+      window.createBaseMetalsChartsWidget("widget_base_metals_charts", {
+        widgetId:"widget_base_metals_charts",
+        width:"400",
+        isTransparent:false,
+        colorTheme:"light",
+        defaultMetal:"CU",
+        defaultTimeFrame:"24H"
+      });
+      // Si a los 5 s no dibujó nada, avisar en vez de dejar el hueco.
+      setTimeout(()=>{ if(!host.children.length) falla("Kitco no devolvió el gráfico"); },5000);
+    }catch(e){ console.error(e); falla("No se pudo dibujar el gráfico de Kitco"); }
+  };
+
+  if(typeof window.createBaseMetalsChartsWidget==="function") return arrancar();
+
+  const s=document.createElement("script");
+  s.src="https://storage.googleapis.com/kitco-widgets-storage/widgetBaseMetalsCharts.bundle.js";
+  // El fragmento original espera DOMContentLoaded, que aquí ya ocurrió:
+  // se arranca al terminar de bajar el bundle.
+  s.onload=arrancar;
+  s.onerror=()=>falla("Sin conexión con Kitco");
+  document.head.appendChild(s);
+}
+
+function montarMercado(){
+  const cont=document.getElementById("mercado");
+  if(!cont || !CONFIG.MERCADO) return;
+
+  if(CONFIG.MERCADO==="kitco") return montarKitco();
+
+  if(CONFIG.MERCADO==="embebido"){
+    const codigo=(CONFIG.CODIGO_EMBEBIDO||"").trim();
+    if(!codigo) return;
+    // innerHTML no ejecuta los <script> que traiga el fragmento,
+    // así que hay que volver a crearlos para que corran.
+    cont.innerHTML=codigo;
+    cont.querySelectorAll("script").forEach(viejo=>{
+      const nuevo=document.createElement("script");
+      [...viejo.attributes].forEach(a=>nuevo.setAttribute(a.name,a.value));
+      nuevo.text=viejo.textContent;
+      viejo.replaceWith(nuevo);
+    });
+    return;
+  }
+
+  const caja=document.createElement("div");
+  caja.className="tradingview-widget-container";
+  caja.innerHTML='<div class="tradingview-widget-container__widget"></div>';
+  const s=document.createElement("script");
+  s.src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js";
+  s.async=true;
+  s.text=JSON.stringify({
+    symbols: CONFIG.SIMBOLOS,
+    showSymbolLogo:false,
+    colorTheme:"dark",
+    isTransparent:true,
+    displayMode:"regular",
+    locale:"es"
+  });
+  caja.appendChild(s);
+  cont.appendChild(caja);
+}
+
+function marcarSync(clase,texto){
+  document.getElementById("punto").className="punto "+clase;
+  document.getElementById("sync-txt").textContent=texto;
+}
+
+let ultimaCarga=null;
+
+async function cargar(){
+  // Las dos hojas se piden a la vez y fallan por separado: si una no
+  // responde, la otra igual se pinta.
+  const procesosProm = traerProcesos().catch(e=>{ console.warn("Procesos:",e.message); return null; });
+
+  try{
+    const lotes = armarLotes(await traerMaestro());
+    const entregadas  = lotes.filter(l=>l.estado!=="programado");
+    const programados = lotes.filter(l=>l.estado==="programado");
+
+    pintarConsolidado(entregadas, programados);
+    pintarProcedencia(entregadas);
+    pintarMeses(entregadas);
+    requestAnimationFrame(animarBarras);
+
+    ultimaCarga=new Date();
+    if(origenDatos==="jsonp") marcarSync("","Actualizado ahora · lectura directa");
+    else                      marcarSync("","Actualizado ahora");
+  }catch(err){
+    console.error(err);
+    marcarSync("error", ultimaCarga
+      ? "Sin conexión · datos de "+ultimaCarga.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"})
+      : "No se pudo leer el Sheet");
+  }
+
+  const procesos = await procesosProm;
+  if(procesos) pintarProcesos(procesos);
+  else document.getElementById("filas").innerHTML =
+    '<div class="vacio"><b>Sin acceso al programa de planta</b>Revisa que la pestaña siga publicada</div>';
+}
+
+function tick(){
+  const n=new Date();
+  document.getElementById("reloj").textContent=n.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit",hour12:false});
+  document.getElementById("fecha").textContent=n.toLocaleDateString("es-PE",{weekday:"long",day:"numeric",month:"long"});
+  if(ultimaCarga){
+    const min=Math.floor((n-ultimaCarga)/60000);
+    if(min>=1){
+      // El origen manda: el respaldo no debe disfrazarse de lectura en vivo.
+      if(origenDatos==="fallo") marcarSync("error","Sin datos · el Sheet no responde");
+      else marcarSync("","Actualizado hace "+min+" min");
+    }
+  }
+}
+
+tick(); setInterval(tick,20000);
+montarMercado();
+cargar(); setInterval(cargar,CONFIG.REFRESCO_MIN*60000);
+let t; window.addEventListener("resize",()=>{ clearTimeout(t); t=setTimeout(cargar,400); });
+</script>
+</body>
+</html>
